@@ -60,7 +60,7 @@ $(foreach f,$(wildcard vendor/prototype/prebuilt/common/etc/init/*.rc),\
 	$(eval PRODUCT_COPY_FILES += $(f):$(TARGET_COPY_OUT_SYSTEM)/etc/init/$(notdir $f)))
 
 # Font service Permissions
-PRODUCT_COPY_FILES += \
+#PRODUCT_COPY_FILES += \
     vendor/prototype/config/permissions/privapp-permissions-prototype-system_ext.xml:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/permissions/privapp-permissions-prototype-system_ext.xml \
 
 # Enable Android Beam on all targets
@@ -221,7 +221,7 @@ PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/prototype/overlay
 DEVICE_PACKAGE_OVERLAYS += vendor/prototype/overlay/common
 
 # Plugins
-include packages/apps/Plugins/plugins.mk
+#include packages/apps/Plugins/plugins.mk
 
 # RRO Overlays
 $(call inherit-product, vendor/prototype/config/rro_overlays.mk)

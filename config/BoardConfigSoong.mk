@@ -15,9 +15,9 @@ EXPORT_TO_SOONG := \
 # Documentation here:
 # https://github.com/LineageOS/android_build_soong/commit/8328367c44085b948c003116c0ed74a047237a69
 
-SOONG_CONFIG_NAMESPACES += lighthouseVarsPlugin
+SOONG_CONFIG_NAMESPACES += prototypeVarsPlugin
 
-SOONG_CONFIG_lighthouseVarsPlugin :=
+SOONG_CONFIG_prototypeVarsPlugin :=
 
 define addVar
   SOONG_CONFIG_prototypeVarsPlugin += $(1)

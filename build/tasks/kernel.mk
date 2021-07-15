@@ -1,5 +1,4 @@
-# Copyright (C) 2012 The CyanogenMod Project
-#           (C) 2017-2020 The LineageOS Project
+# Copyright (C) 2018-2020 The Project Lighthouse
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,400 +11,148 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-
-# Android makefile to build kernel as a part of Android Build
 #
-# Configuration
-# =============
+#
+# Kernel build configuration variables
+# ====================================
 #
 # These config vars are usually set in BoardConfig.mk:
 #
-#   TARGET_KERNEL_CONFIG               = Kernel defconfig
-#   TARGET_KERNEL_VARIANT_CONFIG       = Variant defconfig, optional
-#   TARGET_KERNEL_SELINUX_CONFIG       = SELinux defconfig, optional
-#   TARGET_KERNEL_ADDITIONAL_CONFIG    = Additional defconfig, optional
+#   TARGET_KERNEL_SOURCE               = Kernel source dir, optional, defaults
+#                                          to kernel/$(TARGET_DEVICE_DIR)
+#   TARGET_KERNEL_ADDITIONAL_FLAGS     = Additional make flags, optional
+#   TARGET_KERNEL_ARCH                 = Kernel Arch
+#   TARGET_KERNEL_CROSS_COMPILE_PREFIX = Compiler prefix (e.g. arm-eabi-)
+#                                          defaults to arm-linux-androidkernel- for arm
+#                                                      aarch64-linux-android- for arm64
+#                                                      x86_64-linux-android- for x86
 #
 #   TARGET_KERNEL_CLANG_COMPILE        = Compile kernel with clang, defaults to false
 #
-#   TARGET_KERNEL_CLANG_VERSION        = Clang prebuilts version, optional, defaults to clang-stable
-#
-#   TARGET_KERNEL_CLANG_PATH           = Clang prebuilts path, optional
-#
-#   BOARD_KERNEL_IMAGE_NAME            = Built image name
-#                                          for ARM use: zImage
-#                                          for ARM64 use: Image.gz
-#                                          for uncompressed use: Image
-#                                          If using an appended DT, append '-dtb'
-#                                          to the end of the image name.
-#                                          For example, for ARM devices,
-#                                          use zImage-dtb instead of zImage.
-#
-#   BOARD_DTBO_CFG                     = Path to a mkdtboimg.py config file
-#
-#   BOARD_CUSTOM_DTBOIMG_MK            = Path to a custom dtboimage makefile
-#
-#   KERNEL_CC                          = The C Compiler used. This is automatically set based
-#                                          on whether the clang version is set, optional.
-#   KERNEL_LD                          = The Linker used. This is automatically set based
-#                                          on whether the clang/gcc version is set, optional.
-#
-#   KERNEL_CLANG_TRIPLE                = Target triple for clang (e.g. aarch64-linux-gnu-)
-#                                          defaults to arm-linux-gnu- for arm
-#                                                      aarch64-linux-gnu- for arm64
-#                                                      x86_64-linux-gnu- for x86
-#
-#   NEED_KERNEL_MODULE_ROOT            = Optional, if true, install kernel
-#                                          modules in root instead of vendor
-#   NEED_KERNEL_MODULE_SYSTEM          = Optional, if true, install kernel
-#                                          modules in system instead of vendor
-#   NEED_KERNEL_MODULE_VENDOR_OVERLAY  = Optional, if true, install kernel
-#                                          modules in vendor_overlay instead of vendor
+#   KERNEL_TOOLCHAIN_PREFIX            = Overrides TARGET_KERNEL_CROSS_COMPILE_PREFIX,
+#                                          Set this var in shell to override
+#                                          toolchain specified in BoardConfig.mk
+#   KERNEL_TOOLCHAIN                   = Path to toolchain, if unset, assumes
+#                                          TARGET_KERNEL_CROSS_COMPILE_PREFIX
+#                                          is in PATH
+#   USE_CCACHE                         = Enable ccache (global Android flag)
 
-ifneq ($(TARGET_NO_KERNEL),true)
-ifneq ($(TARGET_NO_KERNEL_OVERRIDE),true)
+BUILD_TOP := $(shell pwd)
 
-## Externally influenced variables
-KERNEL_SRC := $(TARGET_KERNEL_SOURCE)
-# kernel configuration - mandatory
-KERNEL_DEFCONFIG := $(TARGET_KERNEL_CONFIG)
-VARIANT_DEFCONFIG := $(TARGET_KERNEL_VARIANT_CONFIG)
-SELINUX_DEFCONFIG := $(TARGET_KERNEL_SELINUX_CONFIG)
+TARGET_AUTO_KDIR := $(shell echo $(TARGET_DEVICE_DIR) | sed -e 's/^device/kernel/g')
+TARGET_KERNEL_SOURCE ?= $(TARGET_AUTO_KDIR)
+ifneq ($(TARGET_PREBUILT_KERNEL),)
+TARGET_KERNEL_SOURCE := 
+endif
 
-## Internal variables
-DTC := $(HOST_OUT_EXECUTABLES)/dtc
-KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
-DTBO_OUT := $(TARGET_OUT_INTERMEDIATES)/DTBO_OBJ
-DTB_OUT := $(TARGET_OUT_INTERMEDIATES)/DTB_OBJ
-KERNEL_CONFIG := $(KERNEL_OUT)/.config
-KERNEL_RELEASE := $(KERNEL_OUT)/include/config/kernel.release
-
-ifeq ($(KERNEL_ARCH),x86_64)
-KERNEL_DEFCONFIG_ARCH := x86
+TARGET_KERNEL_ARCH := $(strip $(TARGET_KERNEL_ARCH))
+ifeq ($(TARGET_KERNEL_ARCH),)
+KERNEL_ARCH := $(TARGET_ARCH)
 else
-KERNEL_DEFCONFIG_ARCH := $(KERNEL_ARCH)
+KERNEL_ARCH := $(TARGET_KERNEL_ARCH)
 endif
-KERNEL_DEFCONFIG_DIR := $(KERNEL_SRC)/arch/$(KERNEL_DEFCONFIG_ARCH)/configs
-KERNEL_DEFCONFIG_SRC := $(KERNEL_DEFCONFIG_DIR)/$(KERNEL_DEFCONFIG)
 
-ifneq ($(TARGET_KERNEL_ADDITIONAL_CONFIG),)
-KERNEL_ADDITIONAL_CONFIG := $(TARGET_KERNEL_ADDITIONAL_CONFIG)
-KERNEL_ADDITIONAL_CONFIG_SRC := $(KERNEL_DEFCONFIG_DIR)/$(KERNEL_ADDITIONAL_CONFIG)
-    ifeq ("$(wildcard $(KERNEL_ADDITIONAL_CONFIG_SRC))","")
-        $(warning TARGET_KERNEL_ADDITIONAL_CONFIG '$(TARGET_KERNEL_ADDITIONAL_CONFIG)' doesn't exist)
-        KERNEL_ADDITIONAL_CONFIG_SRC := /dev/null
-    endif
+CLANG_PREBUILTS := $(BUILD_TOP)/prebuilts/clang/host/$(HOST_PREBUILT_TAG)/clang-r365631c
+GCC_PREBUILTS := $(BUILD_TOP)/prebuilts/gcc/$(HOST_PREBUILT_TAG)
+# arm64 toolchain
+KERNEL_TOOLCHAIN_arm64 := $(GCC_PREBUILTS)/aarch64/aarch64-linux-android-4.9/bin
+KERNEL_TOOLCHAIN_PREFIX_arm64 := aarch64-linux-android-
+# arm toolchain
+KERNEL_TOOLCHAIN_arm := $(GCC_PREBUILTS)/arm/arm-linux-androideabi-4.9/bin
+KERNEL_TOOLCHAIN_PREFIX_arm := arm-linux-androidkernel-
+# x86 toolchain
+KERNEL_TOOLCHAIN_x86 := $(GCC_PREBUILTS)/x86/x86_64-linux-android-4.9/bin
+KERNEL_TOOLCHAIN_PREFIX_x86 := x86_64-linux-android-
+
+TARGET_KERNEL_CROSS_COMPILE_PREFIX := $(strip $(TARGET_KERNEL_CROSS_COMPILE_PREFIX))
+ifneq ($(TARGET_KERNEL_CROSS_COMPILE_PREFIX),)
+KERNEL_TOOLCHAIN_PREFIX ?= $(TARGET_KERNEL_CROSS_COMPILE_PREFIX)
 else
-    KERNEL_ADDITIONAL_CONFIG_SRC := /dev/null
+KERNEL_TOOLCHAIN ?= $(KERNEL_TOOLCHAIN_$(KERNEL_ARCH))
+KERNEL_TOOLCHAIN_PREFIX ?= $(KERNEL_TOOLCHAIN_PREFIX_$(KERNEL_ARCH))
 endif
 
-ifeq ($(TARGET_PREBUILT_KERNEL),)
-    ifeq ($(BOARD_KERNEL_IMAGE_NAME),)
-        $(error BOARD_KERNEL_IMAGE_NAME not defined.)
-    endif
-endif
-TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/$(BOARD_KERNEL_IMAGE_NAME)
-
-ifeq "$(wildcard $(KERNEL_SRC) )" ""
-    ifneq ($(TARGET_PREBUILT_KERNEL),)
-        HAS_PREBUILT_KERNEL := true
-        NEEDS_KERNEL_COPY := true
-    else
-        $(foreach cf,$(PRODUCT_COPY_FILES), \
-            $(eval _src := $(call word-colon,1,$(cf))) \
-            $(eval _dest := $(call word-colon,2,$(cf))) \
-            $(ifeq kernel,$(_dest), \
-                $(eval HAS_PREBUILT_KERNEL := true)))
-    endif
-
-    ifneq ($(HAS_PREBUILT_KERNEL),)
-        $(warning ***************************************************************)
-        $(warning * Using prebuilt kernel binary instead of source              *)
-        $(warning * THIS IS DEPRECATED, AND IS NOT ADVISED.                     *)
-        $(warning * Please configure your device to download the kernel         *)
-        $(warning * source repository to $(KERNEL_SRC))
-        $(warning * for more information                                        *)
-        $(warning ***************************************************************)
-        FULL_KERNEL_BUILD := false
-        KERNEL_BIN := $(TARGET_PREBUILT_KERNEL)
-    else
-        $(warning ***************************************************************)
-        $(warning *                                                             *)
-        $(warning * No kernel source found, and no fallback prebuilt defined.   *)
-        $(warning * Please make sure your device is properly configured to      *)
-        $(warning * download the kernel repository to $(KERNEL_SRC))
-        $(warning * and add the TARGET_KERNEL_CONFIG variable to BoardConfig.mk *)
-        $(warning *                                                             *)
-        $(warning * As an alternative, define the TARGET_PREBUILT_KERNEL        *)
-        $(warning * variable with the path to the prebuilt binary kernel image  *)
-        $(warning * in your BoardConfig.mk file                                 *)
-        $(warning *                                                             *)
-        $(warning ***************************************************************)
-        $(error "NO KERNEL")
-    endif
+ifeq ($(KERNEL_TOOLCHAIN),)
+KERNEL_TOOLCHAIN_PATH := $(KERNEL_TOOLCHAIN_PREFIX)
 else
-    NEEDS_KERNEL_COPY := true
-    ifeq ($(TARGET_KERNEL_CONFIG),)
-        $(warning **********************************************************)
-        $(warning * Kernel source found, but no configuration was defined  *)
-        $(warning * Please add the TARGET_KERNEL_CONFIG variable to your   *)
-        $(warning * BoardConfig.mk file                                    *)
-        $(warning **********************************************************)
-        $(error "NO KERNEL CONFIG")
-    else
-        ifneq ($(TARGET_FORCE_PREBUILT_KERNEL),)
-            $(warning **********************************************************)
-            $(warning * Kernel source found and configuration was defined      *)
-            $(warning * but prebuilt kernel is being enforced.                 *)
-            $(warning * While there may be a good reason for this,             *)
-            $(warning * THIS IS NOT ADVISED.                                   *)
-            $(warning * Please configure your device to build the kernel       *)
-            $(warning * from source by unsetting TARGET_FORCE_PREBUILT_KERNEL  *)
-            $(warning **********************************************************)
-            FULL_KERNEL_BUILD := false
-            KERNEL_BIN := $(TARGET_PREBUILT_KERNEL)
-        else
-            FULL_KERNEL_BUILD := true
-            KERNEL_BIN := $(TARGET_PREBUILT_INT_KERNEL)
-        endif
+KERNEL_TOOLCHAIN_PATH := $(KERNEL_TOOLCHAIN)/$(KERNEL_TOOLCHAIN_PREFIX)
+endif
+
+# We need to add GCC toolchain to the path no matter what
+# for tools like `as`
+KERNEL_TOOLCHAIN_PATH_gcc := $(KERNEL_TOOLCHAIN_$(KERNEL_ARCH))/$(KERNEL_TOOLCHAIN_PREFIX_$(KERNEL_ARCH))
+
+ifneq ($(USE_CCACHE),)
+    ifneq ($(CCACHE_EXEC),)
+        # Android 10+ deprecates use of a build ccache. Only system installed ones are now allowed
+        CCACHE_BIN := $(CCACHE_EXEC)
     endif
 endif
 
-ifeq ($(FULL_KERNEL_BUILD),true)
-
-ifeq ($(NEED_KERNEL_MODULE_ROOT),true)
-KERNEL_MODULES_OUT := $(TARGET_ROOT_OUT)
-KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_recovery)
-KERNEL_MODULE_MOUNTPOINT :=
-else ifeq ($(NEED_KERNEL_MODULE_SYSTEM),true)
-KERNEL_MODULES_OUT := $(TARGET_OUT)
-KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_system)
-KERNEL_MODULE_MOUNTPOINT := system
-$(INSTALLED_SYSTEMIMAGE_TARGET): $(TARGET_PREBUILT_INT_KERNEL)
-else ifeq ($(NEED_KERNEL_MODULE_VENDOR_OVERLAY),true)
-KERNEL_MODULES_OUT := $(TARGET_OUT_PRODUCT)/vendor_overlay/$(PRODUCT_TARGET_VNDK_VERSION)
-KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_product)
-KERNEL_MODULE_MOUNTPOINT := vendor
-$(INSTALLED_PRODUCTIMAGE_TARGET): $(TARGET_PREBUILT_INT_KERNEL)
-else
-KERNEL_MODULES_OUT := $(TARGET_OUT_VENDOR)
-KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_vendor)
-KERNEL_MODULE_MOUNTPOINT := vendor
-$(INSTALLED_VENDORIMAGE_TARGET): $(TARGET_PREBUILT_INT_KERNEL)
-endif
-MODULES_INTERMEDIATES := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,kernel_modules)
-
-KERNEL_VENDOR_RAMDISK_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_vendor_ramdisk)
-$(INTERNAL_VENDOR_RAMDISK_TARGET): $(TARGET_PREBUILT_INT_KERNEL)
-
-# Add host bin out dir to path
-PATH_OVERRIDE := PATH=$(KERNEL_BUILD_OUT_PREFIX)$(HOST_OUT_EXECUTABLES):$$PATH
 ifeq ($(TARGET_KERNEL_CLANG_COMPILE),true)
-    ifneq ($(TARGET_KERNEL_CLANG_VERSION),)
-        KERNEL_CLANG_VERSION := clang-$(TARGET_KERNEL_CLANG_VERSION)
-    else
-        # Use the default version of clang if TARGET_KERNEL_CLANG_VERSION hasn't been set by the device config
-        KERNEL_CLANG_VERSION := $(LLVM_PREBUILTS_VERSION)
-    endif
-    TARGET_KERNEL_CLANG_PATH ?= $(BUILD_TOP)/prebuilts/clang/host/$(HOST_PREBUILT_TAG)/$(KERNEL_CLANG_VERSION)
-    ifeq ($(KERNEL_ARCH),arm64)
-        KERNEL_CLANG_TRIPLE ?= CLANG_TRIPLE=aarch64-linux-gnu-
-    else ifeq ($(KERNEL_ARCH),arm)
-        KERNEL_CLANG_TRIPLE ?= CLANG_TRIPLE=arm-linux-gnu-
-    else ifeq ($(KERNEL_ARCH),x86)
-        KERNEL_CLANG_TRIPLE ?= CLANG_TRIPLE=x86_64-linux-gnu-
-    endif
-    PATH_OVERRIDE += PATH=$(TARGET_KERNEL_CLANG_PATH)/bin:$$PATH LD_LIBRARY_PATH=$(TARGET_KERNEL_CLANG_PATH)/lib64:$$LD_LIBRARY_PATH
-    ifeq ($(KERNEL_CC),)
-        KERNEL_CC := CC="$(CCACHE_BIN) clang"
-    endif
-    ifeq ($(KERNEL_LD),)
-        KERNEL_LD :=
-    endif
+    KERNEL_CROSS_COMPILE := CROSS_COMPILE="$(KERNEL_TOOLCHAIN_PATH)"
+else
+    KERNEL_CROSS_COMPILE := CROSS_COMPILE="$(CCACHE_BIN) $(KERNEL_TOOLCHAIN_PATH)"
 endif
 
-ifneq ($(TARGET_KERNEL_MODULES),)
-    $(error TARGET_KERNEL_MODULES is no longer supported!)
+# Needed for CONFIG_COMPAT_VDSO, safe to set for all arm64 builds
+ifeq ($(KERNEL_ARCH),arm64)
+   KERNEL_CROSS_COMPILE += CROSS_COMPILE_ARM32="$(KERNEL_TOOLCHAIN_arm)/$(KERNEL_TOOLCHAIN_PREFIX_arm)"
 endif
 
-PATH_OVERRIDE += PATH=$(KERNEL_TOOLCHAIN_PATH_gcc)/bin:$$PATH
+# Clear this first to prevent accidental poisoning from env
+KERNEL_MAKE_FLAGS :=
 
-# System tools are no longer allowed on 10+
-PATH_OVERRIDE += $(TOOLS_PATH_OVERRIDE)
+# Add back threads, ninja cuts this to $(nproc)/2
+KERNEL_MAKE_FLAGS += -j$(shell prebuilts/tools-lighthouse/$(HOST_PREBUILT_TAG)/bin/nproc --all)
 
-KERNEL_ADDITIONAL_CONFIG_OUT := $(KERNEL_OUT)/.additional_config
+ifeq ($(KERNEL_ARCH),arm)
+  # Avoid "Unknown symbol _GLOBAL_OFFSET_TABLE_" errors
+  KERNEL_MAKE_FLAGS += CFLAGS_MODULE="-fno-pic"
+endif
 
-# Internal implementation of make-kernel-target
-# $(1): output path (The value passed to O=)
-# $(2): target to build (eg. defconfig, modules, dtbo.img)
-define internal-make-kernel-target
-$(PATH_OVERRIDE) $(KERNEL_MAKE_CMD) $(KERNEL_MAKE_FLAGS) -C $(KERNEL_SRC) O=$(KERNEL_BUILD_OUT_PREFIX)$(1) ARCH=$(KERNEL_ARCH) $(KERNEL_CROSS_COMPILE) $(KERNEL_CLANG_TRIPLE) $(KERNEL_CC) $(KERNEL_LD) $(2)
-endef
+ifeq ($(KERNEL_ARCH),arm64)
+  # Avoid "unsupported RELA relocation: 311" errors (R_AARCH64_ADR_GOT_PAGE)
+  KERNEL_MAKE_FLAGS += CFLAGS_MODULE="-fno-pic"
+endif
 
-# Make a kernel target
-# $(1): The kernel target to build (eg. defconfig, modules, modules_install)
-define make-kernel-target
-$(call internal-make-kernel-target,$(KERNEL_OUT),$(1))
-endef
+ifeq ($(HOST_OS),darwin)
+  KERNEL_MAKE_FLAGS += HOSTCFLAGS="-I$(BUILD_TOP)/external/elfutils/libelf -I/usr/local/opt/openssl/include -fuse-ld=lld" HOSTLDFLAGS="-L/usr/local/opt/openssl/lib -fuse-ld=lld"
+else
+  KERNEL_MAKE_FLAGS += CPATH="/usr/include:/usr/include/x86_64-linux-gnu" HOSTCFLAGS="-fuse-ld=lld" HOSTLDFLAGS="-L/usr/lib/x86_64-linux-gnu -L/usr/lib64 -fuse-ld=lld"
+endif
 
-# Make a DTBO target
-# $(1): The DTBO target to build (eg. dtbo.img, defconfig)
-define make-dtbo-target
-$(call internal-make-kernel-target,$(DTBO_OUT),$(1))
-endef
+ifneq ($(TARGET_KERNEL_ADDITIONAL_FLAGS),)
+  KERNEL_MAKE_FLAGS += $(TARGET_KERNEL_ADDITIONAL_FLAGS)
+endif
 
-# Make a DTB targets
-# $(1): The DTB target to build (eg. dtbs, defconfig)
-define make-dtb-target
-$(call internal-make-kernel-target,$(DTB_OUT),$(1))
-endef
+TOOLS_PATH_OVERRIDE := \
+    PATH=$(BUILD_TOP)/prebuilts/tools-lighthouse/$(HOST_PREBUILT_TAG)/bin:$$PATH \
+    LD_LIBRARY_PATH=$(BUILD_TOP)/prebuilts/tools-lighthouse/$(HOST_PREBUILT_TAG)/lib:$$LD_LIBRARY_PATH \
+    PERL5LIB=$(BUILD_TOP)/prebuilts/tools-lighthouse/common/perl-base
 
-# $(1): modules list
-# $(2): output dir
-# $(3): mount point
-# $(4): staging dir
-# $(5): module load list
-# Depmod requires a well-formed kernel version so 0.0 is used as a placeholder.
-define build-image-kernel-modules-prototype
-    mkdir -p $(2)/lib/modules
-    cp $(1) $(2)/lib/modules/
-    rm -rf $(4)
-    mkdir -p $(4)/lib/modules/0.0/$(3)lib/modules
-    cp $(1) $(4)/lib/modules/0.0/$(3)lib/modules
-    $(DEPMOD) -b $(4) 0.0
-    sed -e 's/\(.*modules.*\):/\/\1:/g' -e 's/ \([^ ]*modules[^ ]*\)/ \/\1/g' $(4)/lib/modules/0.0/modules.dep > $(2)/lib/modules/modules.dep
-    cp $(4)/lib/modules/0.0/modules.softdep $(2)/lib/modules
-    cp $(4)/lib/modules/0.0/modules.alias $(2)/lib/modules
-    rm -f $(2)/lib/modules/modules.load
-    for MODULE in $(5); do \
-        basename $$MODULE >> $(2)/lib/modules/modules.load; \
-    done
-endef
-
-$(KERNEL_OUT):
-	mkdir -p $(KERNEL_OUT)
-
-$(KERNEL_ADDITIONAL_CONFIG_OUT): $(KERNEL_OUT)
-	$(hide) cmp -s $(KERNEL_ADDITIONAL_CONFIG_SRC) $@ || cp $(KERNEL_ADDITIONAL_CONFIG_SRC) $@;
-
-$(KERNEL_CONFIG): $(KERNEL_DEFCONFIG_SRC) $(KERNEL_ADDITIONAL_CONFIG_OUT)
-	@echo "Building Kernel Config"
-	$(call make-kernel-target,VARIANT_DEFCONFIG=$(VARIANT_DEFCONFIG) SELINUX_DEFCONFIG=$(SELINUX_DEFCONFIG) $(KERNEL_DEFCONFIG))
-	$(hide) if [ ! -z "$(KERNEL_CONFIG_OVERRIDE)" ]; then \
-			echo "Overriding kernel config with '$(KERNEL_CONFIG_OVERRIDE)'"; \
-			echo $(KERNEL_CONFIG_OVERRIDE) >> $(KERNEL_OUT)/.config; \
-			$(call make-kernel-target,oldconfig); \
-		fi
-	# Create defconfig build artifact
-	$(call make-kernel-target,savedefconfig)
-	$(hide) if [ ! -z "$(KERNEL_ADDITIONAL_CONFIG)" ]; then \
-			echo "Using additional config '$(KERNEL_ADDITIONAL_CONFIG)'"; \
-			$(KERNEL_SRC)/scripts/kconfig/merge_config.sh -m -O $(KERNEL_OUT) $(KERNEL_OUT)/.config $(KERNEL_SRC)/arch/$(KERNEL_ARCH)/configs/$(KERNEL_ADDITIONAL_CONFIG); \
-			$(call make-kernel-target,KCONFIG_ALLCONFIG=$(KERNEL_OUT)/.config alldefconfig); \
-		fi
-
-$(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_CONFIG) $(DEPMOD) $(DTC)
-	@echo "Building Kernel Image ($(BOARD_KERNEL_IMAGE_NAME))"
-	$(call make-kernel-target,$(BOARD_KERNEL_IMAGE_NAME))
-	$(hide) if grep -q '^CONFIG_OF=y' $(KERNEL_CONFIG); then \
-			echo "Building DTBs"; \
-			$(call make-kernel-target,dtbs); \
-		fi
-	$(hide) if grep -q '=m' $(KERNEL_CONFIG); then \
-			echo "Building Kernel Modules"; \
-			$(call make-kernel-target,modules) || exit "$$?"; \
-			echo "Installing Kernel Modules"; \
-			$(call make-kernel-target,INSTALL_MOD_PATH=$(MODULES_INTERMEDIATES) INSTALL_MOD_STRIP=1 modules_install); \
-			kernel_release=$$(cat $(KERNEL_RELEASE)) \
-			kernel_modules_dir=$(MODULES_INTERMEDIATES)/lib/modules/$$kernel_release \
-			$(foreach s, $(TARGET_MODULE_ALIASES),\
-				$(eval p := $(subst :,$(space),$(s))) \
-				; mv $$(find $$kernel_modules_dir -name $(word 1,$(p))) $$kernel_modules_dir/$(word 2,$(p))); \
-			modules=$$(find $$kernel_modules_dir -type f -name '*.ko'); \
-			($(call build-image-kernel-modules-prototype,$$modules,$(KERNEL_MODULES_OUT),$(KERNEL_MODULE_MOUNTPOINT)/,$(KERNEL_DEPMOD_STAGING_DIR),$(BOARD_VENDOR_KERNEL_MODULES_LOAD))); \
-			$(if $(BOOT_KERNEL_MODULES),\
-				vendor_boot_modules=$$(for m in $(BOOT_KERNEL_MODULES); do \
-					p=$$(find $$kernel_modules_dir -type f -name $$m); \
-					if [ -n "$$p" ]; then echo $$p; else echo "ERROR: $$m from BOOT_KERNEL_MODULES was not found" 1>&2 && exit 1; fi; \
-				done); \
-				[ $$? -ne 0 ] && exit 1; \
-				($(call build-image-kernel-modules-prototype,$$vendor_boot_modules,$(TARGET_VENDOR_RAMDISK_OUT),/,$(KERNEL_VENDOR_RAMDISK_DEPMOD_STAGING_DIR),$(BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD))); \
-			) \
-		fi
-
-.PHONY: kerneltags
-kerneltags: $(KERNEL_CONFIG)
-	$(call make-kernel-target,tags)
-
-.PHONY: kernelsavedefconfig alldefconfig
-
-kernelsavedefconfig: $(KERNEL_OUT)
-	$(call make-kernel-target,$(KERNEL_DEFCONFIG))
-	env KCONFIG_NOTIMESTAMP=true \
-		 $(call make-kernel-target,savedefconfig)
-	cp $(KERNEL_OUT)/defconfig $(KERNEL_DEFCONFIG_SRC)
-
-alldefconfig: $(KERNEL_OUT)
-	env KCONFIG_NOTIMESTAMP=true \
-		 $(call make-kernel-target,alldefconfig)
-
+# Set DTBO image locations so the build system knows to build them
 ifeq (true,$(filter true, $(TARGET_NEEDS_DTBOIMAGE) $(BOARD_KERNEL_SEPARATED_DTBO)))
-ifneq ($(BOARD_CUSTOM_DTBOIMG_MK),)
-include $(BOARD_CUSTOM_DTBOIMG_MK)
-else
-MKDTIMG := $(HOST_OUT_EXECUTABLES)/mkdtimg$(HOST_EXECUTABLE_SUFFIX)
-MKDTBOIMG := $(HOST_OUT_EXECUTABLES)/mkdtboimg.py$(HOST_EXECUTABLE_SUFFIX)
-$(BOARD_PREBUILT_DTBOIMAGE): $(DTC) $(MKDTIMG) $(MKDTBOIMG)
-ifeq ($(BOARD_KERNEL_SEPARATED_DTBO),true)
-$(BOARD_PREBUILT_DTBOIMAGE):
-	@echo "Building dtbo.img"
-	$(call make-dtbo-target,$(KERNEL_DEFCONFIG))
-	$(call make-dtbo-target,dtbs)
-ifdef BOARD_DTBO_CFG
-	$(MKDTBOIMG) cfg_create $@ $(BOARD_DTBO_CFG) -d $(DTBO_OUT)/arch/$(KERNEL_ARCH)/boot/dts
-else
-	$(MKDTBOIMG) create $@ --page_size=$(BOARD_KERNEL_PAGESIZE) $(shell find $(DTBO_OUT)/arch/$(KERNEL_ARCH)/boot/dts -type f -name "*.dtbo" | sort)
-endif
-else
-$(BOARD_PREBUILT_DTBOIMAGE):
-	@echo "Building dtbo.img"
-	$(call make-dtbo-target,$(KERNEL_DEFCONFIG))
-	$(call make-dtbo-target,dtbo.img)
-endif # BOARD_KERNEL_SEPARATED_DTBO
-endif # BOARD_CUSTOM_DTBOIMG_MK
-endif # TARGET_NEEDS_DTBOIMAGE/BOARD_KERNEL_SEPARATED_DTBO
-
-ifeq ($(BOARD_INCLUDE_DTB_IN_BOOTIMG),true)
-ifeq ($(BOARD_PREBUILT_DTBIMAGE_DIR),)
-$(INSTALLED_DTBIMAGE_TARGET): $(DTC)
-	@echo "Building dtb.img"
-	$(call make-dtb-target,$(KERNEL_DEFCONFIG))
-	$(call make-dtb-target,dtbs)
-	cat $(shell find $(DTB_OUT)/arch/$(KERNEL_ARCH)/boot/dts -type f -name "*.dtb" | sort) > $@
-endif # !BOARD_PREBUILT_DTBIMAGE_DIR
-endif # BOARD_INCLUDE_DTB_IN_BOOTIMG
-
-endif # FULL_KERNEL_BUILD
-
-## Install it
-
-ifeq ($(NEEDS_KERNEL_COPY),true)
-file := $(INSTALLED_KERNEL_TARGET)
-ALL_PREBUILT += $(file)
-$(file) : $(KERNEL_BIN) | $(ACP)
-	$(transform-prebuilt-to-target)
-
-ALL_PREBUILT += $(INSTALLED_KERNEL_TARGET)
+BOARD_PREBUILT_DTBOIMAGE ?= $(TARGET_OUT_INTERMEDIATES)/DTBO_OBJ/arch/$(KERNEL_ARCH)/boot/dtbo.img
 endif
 
-.PHONY: kernel
-kernel: $(INSTALLED_KERNEL_TARGET)
+# Set use the full path to the make command
+KERNEL_MAKE_CMD := $(BUILD_TOP)/prebuilts/build-tools/$(HOST_PREBUILT_TAG)/bin/make
 
-.PHONY: dtboimage
-dtboimage: $(INSTALLED_DTBOIMAGE_TARGET)
+# Set the full path to the clang command
+KERNEL_MAKE_FLAGS += HOSTCC=$(CLANG_PREBUILTS)/bin/clang
+KERNEL_MAKE_FLAGS += HOSTCXX=$(CLANG_PREBUILTS)/bin/clang++
 
-.PHONY: dtbimage
-dtbimage: $(INSTALLED_DTBIMAGE_TARGET)
+# Since Linux 4.16, flex and bison are required
+KERNEL_MAKE_FLAGS += LEX=$(BUILD_TOP)/prebuilts/build-tools/$(HOST_PREBUILT_TAG)/bin/flex
+KERNEL_MAKE_FLAGS += YACC=$(BUILD_TOP)/prebuilts/build-tools/$(HOST_PREBUILT_TAG)/bin/bison
+KERNEL_MAKE_FLAGS += M4=$(BUILD_TOP)/prebuilts/build-tools/$(HOST_PREBUILT_TAG)/bin/m4
+TOOLS_PATH_OVERRIDE += BISON_PKGDATADIR=$(BUILD_TOP)/prebuilts/build-tools/common/bison
 
-endif # TARGET_NO_KERNEL_OVERRIDE
-endif # TARGET_NO_KERNEL
+# Set the out dir for the kernel's O= arg
+# This needs to be an absolute path, so only set this if the standard out dir isn't used
+OUT_DIR_PREFIX := $(shell echo $(OUT_DIR) | sed -e 's|/target/.*$$||g')
+KERNEL_BUILD_OUT_PREFIX :=
+ifeq ($(OUT_DIR_PREFIX),out)
+KERNEL_BUILD_OUT_PREFIX := $(BUILD_TOP)/
+endif
